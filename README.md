@@ -35,4 +35,5 @@ The **UART 16550** is a widely used asynchronous serial communication controller
 | DLL/DLM  | Divisor Latch Low/High Bytes               |
 | MCR/MSR  | Modem Control/Status Register (not used)   |
 
+---
 Contributions and suggestions are welcome — please feel free to fork, open an issue, or submit a pull request.

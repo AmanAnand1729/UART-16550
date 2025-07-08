@@ -145,15 +145,6 @@ module uart_16550 (
     );
     // In uart_16550.v
 // Add inside an initial block or an always @(posedge clk) block for continuous monitoring
-always @(posedge clk) begin
-    if (rx_fifo_wr) begin // This is the signal that *should* trigger a FIFO write
-        $display("TOP: %t rx_data_ready asserted! Data from RX: 0x%h. FIFO full? %b", $time, rx_rbr_output, rx_fifo_full);
-    end
-    if (read_rbr) begin // This is the signal that *should* trigger a FIFO read
-        $display("TOP: %t read_rbr asserted! FIFO empty? %b. Data from FIFO (dout): 0x%h", $time, rx_fifo_empty, rx_fifo_out);
-    end
-end
-    
     // Instantiate Transmitter
     tx transmitter (
         .clk(clk),

@@ -63,7 +63,6 @@ module tx (
             bit_count      <= 0;
             tx_done        <= 0;
             shift_reg      <= 0;
-            stx_reg        <= 1'b1;
             tx_data_latched <= 8'h00;
         end else begin
             tx_done <= 0;
@@ -71,7 +70,6 @@ module tx (
             // Latch data immediately on write_thr
             if (write_thr) begin
                 tx_data_latched <= thr_data;
-                $display("TX: Data latched immediately: 0x%h", thr_data);
             end
 
             if (baud_tick) begin
@@ -121,24 +119,5 @@ module tx (
         thr_empty = (state == IDLE);
     end
 
-    // Debug printing
-    always @(posedge clk) begin
-        if (write_thr)
-            $display("TX: Data latched: 0x%h", thr_data);
-    end
-
-    always @(posedge clk) begin
-        if (baud_tick)
-            $display("TX DEBUG: %t baud_tick HIGH, state=%0d, bit_count=%0d", $time, state, bit_count);
-    end
-
-    always @(posedge clk) begin
-        if (baud_tick && (state == DATA || state == PARITY || state == STOP))
-            $display("TX BIT @ %t ns: tx = %b, bit_count = %0d", $time, stx, bit_count);
-    end
-
-    always @(stx) begin
-        $display("TX CHANGE @ %t ns: tx = %b", $time, stx);
-    end
 
 endmodule

@@ -57,7 +57,7 @@ module rx(
                 if (srx_sync[1] == 1'b0) begin 
                     state    <= START;
                     os_count <= 4'd0; 
-                    $display("RX: %t IDLE -> START. Falling edge detected on SRX. os_count reset.", $time);
+                   
                 end
             end
 
@@ -70,12 +70,12 @@ module rx(
                             state       <= DATA;
                             os_count    <= 4'd0; 
                             bit_count   <= 3'd0; 
-                            $display("RX: %t START -> DATA. Mid-start bit sampled. SRX: %b. os_count reset for first data bit.", $time, srx_sync[1]);
+                           
                         end else begin
                             // Framing error: start bit not low
                             frame_err <= 1'b1;
                             state     <= IDLE;
-                            $display("RX: %t START -> IDLE. Framing Error: Start bit was high.", $time);
+                            
                         end
                     end
                 end
@@ -87,19 +87,18 @@ module rx(
 
                     if (os_count == 8) begin 
                         shift_reg[bit_count] <= srx_sync[1]; 
-                        $display("RX: %t DATA state. Sampled Bit %0d. SRX: %b. shift_reg after update: 0x%h",
-                                 $time, bit_count, srx_sync[1], shift_reg);
+                       
                     end
 
                     if (os_count == 15) begin 
                         if (bit_count == word_len - 1) begin // Check for last data bit (7 for 8N1)
                             state       <= STOP;
                             os_count    <= 4'd0; 
-                            $display("RX: %t DATA -> STOP. Last data bit sampled and full bit period elapsed.", $time);
+                            
                         end else begin
                             bit_count   <= bit_count + 1; 
                             os_count    <= 4'd0; 
-                            $display("RX: %t DATA state: Moving to Bit %0d. os_count reset for new bit.", $time, bit_count + 1);
+                            
                         end
                     end
                 end
@@ -116,8 +115,7 @@ module rx(
                     if (os_count == 15) begin 
                         rbr_full <= 1'b1; 
                         rbr      <= shift_reg; 
-                        $display("RX: %t === Data READY for FIFO === Data in shift_reg: 0x%h, SRX at mid-stop: %b, rbr_full asserted!",
-                                 $time, shift_reg, srx_sync[1]);
+                       
                         state    <= IDLE; 
                         os_count <= 4'd0; 
                     end

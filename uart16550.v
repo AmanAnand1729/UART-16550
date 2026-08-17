@@ -35,6 +35,8 @@ module uart_16550 (
     
     // Receiver signals
     wire rbr_full, frame_err, parity_err;
+    wire ecc_err_detected;  // NEW
+    wire ecc_err_corrected; // NEW
     
     // FIFO signals
     wire [7:0] tx_fifo_out, rx_fifo_out;
@@ -62,12 +64,12 @@ module uart_16550 (
     end
     // Line Status Register (LSR) bits
     assign lsr = {
-        1'b0,                      // [7] - Unused
+        ecc_err_detected,          // [7] - NEW: High if ANY error was detected by Hamming
         (thr_empty && tx_fifo_empty), // [6] - TEMT (Transmitter empty and FIFO empty)
         thr_empty,                 // [5] - THRE (Transmitter holding register empty)
         frame_err,                 // [4] - Framing error
         parity_err,                // [3] - Parity error
-        1'b0,                      // [2] - Break interrupt (not implemented)
+        ecc_err_corrected,         // [2] - NEW: High if a 1-bit error was successfully fixed
         (rx_fifo_full && rbr_full), // [1] - Overrun error (if FIFO full and new data arrives)
         !rx_fifo_empty             // [0] - Data ready
     };
@@ -169,7 +171,9 @@ module uart_16550 (
         .rbr(rx_rbr_output),
         .rbr_full(rx_rbr_full_output),
         .frame_err(frame_err),
-        .parity_err(parity_err)
+        .parity_err(parity_err),
+        .ecc_err_detected(ecc_err_detected),   // NEW
+        .ecc_err_corrected(ecc_err_corrected)  // NEW
     );
     
     // Interrupt generation: when RX FIFO not empty and interrupt enabled for data available

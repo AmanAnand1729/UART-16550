@@ -39,7 +39,16 @@ module uart_16550_tb;
         .out1(out1),
         .out2(out2)
     );
+    
+    // --- Helper for Testbench ---
+    wire [12:1] encoded_rx_test_data;
+    reg  [7:0]  raw_rx_test_data;
 
+    // Use your own encoder to generate the test stimulus!
+    hamming_encoder tb_encoder (
+        .data_in(raw_rx_test_data),
+        .code(encoded_rx_test_data)
+    );
     // Clock generation
     initial begin
         clk = 0;
@@ -185,32 +194,60 @@ module uart_16550_tb;
     task test_reception;
         reg [7:0] read_val;
         integer i;
-        reg [7:0] data_to_send;
+        reg [12:1] corrupted_rx_data; // NEW: Register for error injection
+        
         begin
-            data_to_send = 8'hA5;
-            $display("Test 4: Reception Test");
+            // 1. Define the 8-bit data you want to test
+            raw_rx_test_data = 8'hA5; 
+            
+            // Allow a brief moment for the tb_encoder to process
+            #1; 
+            
+            // --- ERROR INJECTION ---
+            corrupted_rx_data = encoded_rx_test_data;
+            
+            // Let's intentionally flip Bit 6 (you can change this to test different positions)
+            corrupted_rx_data[6] = ~corrupted_rx_data[6]; 
+            
+            $display("Test 4: Reception Test (with Single-Bit Error Injection at Bit 6)");
+            $display("Original Code: %b, Corrupted Code: %b", encoded_rx_test_data, corrupted_rx_data);
+            
             rx = 1'b1;
             #(BAUD_PERIOD * 2);
 
+            // 2. Send Start Bit
             rx = 1'b0;
             #(BAUD_PERIOD);
-            for (i = 0; i < 8; i = i + 1) begin
-                rx = data_to_send[i];
+            
+            // 3. Send the CORRUPTED 12-bit Hamming Codeword
+            for (i = 1; i <= 12; i = i + 1) begin
+                rx = corrupted_rx_data[i];
                 #(BAUD_PERIOD);
             end
+            
+            // 4. Send Stop Bit
             rx = 1'b1;
             #(BAUD_PERIOD * 3);
 
-            read_register(3'b101, read_val);
+            // 5. Check Registers
+            read_register(3'b101, read_val); // Read LSR
+            
+            // Check if our new ECC flags caught it!
+            if (read_val[7] === 1'b1 && read_val[2] === 1'b1) begin
+                $display("PASS: ECC successfully detected and corrected the error! LSR = 0x%h", read_val);
+            end else begin
+                $error("FAIL: ECC flags not set correctly in LSR. LSR = 0x%h", read_val);
+                error_count = error_count + 1;
+            end
+
             if (read_val[0] !== 1'b1) begin
                 $error("FAIL: No data received. LSR = 0x%h", read_val);
                 error_count = error_count + 1;
-            end else begin
-                $display("PASS: Data Ready. LSR = 0x%h", read_val);
             end
 
-            read_register(3'b000, read_val);
-            check_result("Received Data", read_val, data_to_send);
+            // 6. Verify the data was actually corrected back to 0xA5
+            read_register(3'b000, read_val); // Read RX Buffer
+            check_result("Corrected Data Check", read_val, raw_rx_test_data);
         end
     endtask
 

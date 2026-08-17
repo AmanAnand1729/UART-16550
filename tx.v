@@ -1,138 +1,119 @@
 `timescale 1ns/1ps
 
-module rx(
-    input        clk, rst,
-    input        baud_tick,   
-    input        tick16,      
-    input        srx,         
-    input  [7:0] lcr,         
-    output reg [7:0] rbr,               // Still 8-bit output to FIFO
-    output reg   rbr_full,    
-    output reg   frame_err,   
-    output reg   parity_err,
-    output       ecc_err_detected,      // NEW: flags for debugging/LSR
-    output       ecc_err_corrected      // NEW: flags for debugging/LSR
+module tx (
+    input        clk,
+    input        rst,
+    input        baud_tick,
+    input        write_thr,
+    input  [7:0] thr_data,      
+    input  [7:0] lcr,
+    output       stx,
+    output reg   thr_empty,
+    output reg   tx_done
 );
 
-    localparam IDLE=0, START=1, DATA=2, STOP=3;
-    reg [1:0]  state;
-    reg [3:0]  os_count;     
-    reg [3:0]  bit_count;       // Expanded to 4 bits
-    reg [11:0] shift_reg;       // Expanded to 12 bits
-    reg [1:0]  srx_sync;     
-    reg        srx_prev;     
+    // FSM States - New state added: WAIT_BAUD
+    localparam IDLE      = 3'd0,
+               WAIT_BAUD = 3'd5,  
+               START     = 3'd1,
+               DATA      = 3'd2,
+               PARITY    = 3'd3,
+               STOP      = 3'd4;
 
-    reg calculated_parity;
-    integer j;
-    reg rbr_full_d;
+    reg [2:0]  state, next_state;
+    reg [3:0]  tick_count;
+    reg [11:0] shift_reg;        
+    reg [7:0]  tx_data_latched;  
+    reg        parity_bit;
+    reg        stx_reg;
+    reg [3:0]  bit_count;        
 
-    // Hamming Decoder wires
-    wire [7:0] corrected_data;
-    wire [3:0] syndrome;
-    
-    // Instantiate the Hamming Decoder
-    hamming_decoder ecc_dec (
-        .code(shift_reg[11:0]),         // 12-bit received code
-        .data_out(corrected_data),      // 8-bit corrected data
-        .syndrome(syndrome),
-        .error_detected(ecc_err_detected),
-        .error_corrected(ecc_err_corrected)
+    wire [12:1] encoded_data;
+
+    hamming_encoder ecc_enc (
+        .data_in(tx_data_latched),
+        .code(encoded_data)
     );
 
-    // Word length is forced to 12 because of the (12,8) Hamming code
-    wire [3:0] word_len = 4'd12;
-    wire parity_en = lcr[3]; 
-    wire even_parity = lcr[4]; 
-    reg expected_parity_bit_value;
+    wire [3:0] word_len    = 4'd12; 
+    wire       parity_en   = lcr[3];
+    wire       even_parity = lcr[4];
 
-    // Two-stage synchronizer for SRX input
-    always @(posedge clk) begin
-        srx_sync <= {srx_sync[0], srx};
-        srx_prev <= srx_sync[1]; 
+    always @(posedge clk or posedge rst) begin
+        if (rst) state <= IDLE;
+        else state <= next_state;
+    end
+
+    // FSM Next-State Logic (SYNC FIXED)
+    always @(*) begin
+        next_state = state;
+        case (state)
+            IDLE:      if (write_thr) next_state = WAIT_BAUD; // wait for sync
+            WAIT_BAUD: if (baud_tick) next_state = START;     // start after sync arrive
+            START:     if (baud_tick) next_state = DATA;
+            DATA:      if (baud_tick && (bit_count == word_len - 1))
+                           next_state = parity_en ? PARITY : STOP;
+            PARITY:    if (baud_tick) next_state = STOP;
+            STOP:      if (baud_tick) next_state = IDLE; 
+        endcase
     end
 
     always @(posedge clk or posedge rst) begin
         if (rst) begin
-            state       <= IDLE;
-            os_count    <= 4'd0;
-            bit_count   <= 4'd0;
-            rbr_full    <= 1'b0;
-            rbr_full_d  <= 1'b0;
-            frame_err   <= 1'b0;
-            parity_err  <= 1'b0;
-            shift_reg   <= 12'd0;
-            rbr         <= 8'd0;
+            tick_count      <= 0;
+            bit_count       <= 0;
+            tx_done         <= 0;
+            shift_reg       <= 0;
+            tx_data_latched <= 8'h00;
         end else begin
-            rbr_full    <= 1'b0; 
-            rbr_full_d  <= rbr_full;
-            frame_err   <= 1'b0; 
+            tx_done <= 0;
 
-            case (state)
-                IDLE: begin
-                    if (srx_sync[1] == 1'b0) begin 
-                        state    <= START;
-                        os_count <= 4'd0; 
+            if (write_thr) begin
+                tx_data_latched <= thr_data;
+            end
+
+            if (baud_tick) begin
+                tick_count <= 0;
+                case (state)
+                    START: begin
+                        shift_reg <= encoded_data[12:1]; 
+                        bit_count <= 0;
+                        if (parity_en)
+                            parity_bit <= even_parity ? ~(^encoded_data) : ^encoded_data;
                     end
-                end
-
-                START: begin
-                    if (tick16) begin 
-                        os_count <= os_count + 1;
-
-                        if (os_count == 8) begin // Mid-point of start bit
-                            if (srx_sync[1] == 1'b0) begin 
-                                state       <= DATA;
-                                os_count    <= 4'd0; 
-                                bit_count   <= 4'd0; 
-                            end else begin
-                                frame_err <= 1'b1;
-                                state     <= IDLE;
-                            end
+                    DATA: begin
+                        if (bit_count < word_len - 1) begin
+                            shift_reg <= shift_reg >> 1;
+                            bit_count <= bit_count + 1;
                         end
                     end
-                end
-
-                DATA: begin
-                    if (tick16) begin 
-                        os_count <= os_count + 1;
-
-                        if (os_count == 8) begin 
-                            shift_reg[bit_count] <= srx_sync[1]; 
-                        end
-
-                        if (os_count == 15) begin 
-                            if (bit_count == word_len - 1) begin // Check for 12th bit
-                                state       <= STOP; // Should transition to PARITY if parity_en, simplified here
-                                os_count    <= 4'd0; 
-                            end else begin
-                                bit_count   <= bit_count + 1; 
-                                os_count    <= 4'd0; 
-                            end
-                        end
+                    STOP: begin
+                        tx_done <= 1;
                     end
-                end
-
-                STOP: begin
-                    if (tick16) begin 
-                        os_count <= os_count + 1;
-
-                        if (os_count == 8) begin
-                            if (srx_sync[1] != 1'b1) frame_err <= 1'b1; 
-                        end
-
-                        if (os_count == 15) begin 
-                            rbr_full <= 1'b1; 
-                            // output the CORRECTED 8-bit data instead of the raw shift register
-                            rbr      <= corrected_data; 
-                            
-                            state    <= IDLE; 
-                            os_count <= 4'd0; 
-                        end
-                    end
-                end
-
-                default: state <= IDLE; 
-            endcase
+                endcase
+            end else if (state != IDLE) begin
+                tick_count <= tick_count + 1;
+            end
         end
     end
+
+    // Serial output logic
+    always @(*) begin
+        case (state)
+            IDLE:      stx_reg = 1'b1;
+            WAIT_BAUD: stx_reg = 1'b1; // keep line high in wait state
+            START:     stx_reg = 1'b0;
+            DATA:      stx_reg = shift_reg[0];
+            PARITY:    stx_reg = parity_bit;
+            STOP:      stx_reg = 1'b1;
+            default:   stx_reg = 1'b1;
+        endcase
+    end
+
+    assign stx = stx_reg;
+
+    always @(*) begin
+        thr_empty = (state == IDLE);
+    end
+
 endmodule
